@@ -263,6 +263,7 @@ else:
                         mime="text/markdown"
                     )
 # === AI SUGGESTIONS TAB ===
+# === AI SUGGESTIONS TAB ===
 ai_tab = st.tabs(["AI Suggestions"])[0]
 
 with ai_tab:
@@ -278,11 +279,15 @@ with ai_tab:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    api_key = st.text_input("OpenRouter API Key", type="password", key="lap_ai_api_key")
+    if "lap_ai_api_key" not in st.session_state:
+        st.session_state.lap_ai_api_key = ""
 
-    # Only proceed if user analyzed retrospectives
-    if 'results_df' in locals() and not results_df.empty:
-        # User Input
+    api_key = st.text_input("OpenRouter API Key", type="password", value=st.session_state.lap_ai_api_key)
+    st.session_state.lap_ai_api_key = api_key
+
+    if "results_df" in st.session_state and not st.session_state.results_df.empty:
+        results_df = st.session_state.results_df
+
         prompt = st.chat_input("Ask about feedback insights, top concerns, or next actions...")
 
         if prompt:
@@ -290,7 +295,7 @@ with ai_tab:
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # Build AI context
+            # Prepare context from feedback
             top_feedback = results_df.head(10).to_dict(orient='records')
             context = "You are a helpful assistant for sprint retrospectives.\n\nTop feedback items (with votes):\n"
             for item in top_feedback:
@@ -298,7 +303,6 @@ with ai_tab:
                 context += f"- {item['Feedback']} ({item['Votes']} votes) {task}\n"
             context += f"\nUser prompt: {prompt}"
 
-            # Stream response from OpenRouter
             with st.chat_message("assistant"):
                 message_placeholder = st.empty()
                 full_response = ""
@@ -328,7 +332,7 @@ with ai_tab:
                         if response.status_code == 200:
                             for chunk in response.iter_lines():
                                 if chunk:
-                                    chunk_str = chunk.decode('utf-8')
+                                    chunk_str = chunk.decode("utf-8")
                                     if chunk_str.startswith("data:"):
                                         try:
                                             data = json.loads(chunk_str[5:])
@@ -348,4 +352,3 @@ with ai_tab:
                 st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
     else:
         st.info("Please analyze at least one retrospective file to enable AI insights.")
-
