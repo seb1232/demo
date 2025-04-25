@@ -4,4 +4,4 @@ streamlit
 matplotlib
 msal
 requests
-ploty
+plotly==6.0.0
