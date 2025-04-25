@@ -325,12 +325,15 @@ with ai_tab:
                         for chunk in response.iter_lines():
                             if chunk:
                                 chunk_str = chunk.decode("utf-8")
-                                if chunk_str.startswith("data:"):
-                                    data = json.loads(chunk_str[5:])
-                                    delta = data["choices"][0].get("delta", {})
-                                    if "content" in delta:
-                                        full_response += delta["content"]
-                                        msg_placeholder.markdown(full_response + "▌")
+                                if chunk_str.startswith("data:") and chunk_str.strip() != "data: [DONE]":
+                                    try:
+                                        data = json.loads(chunk_str[5:])
+                                        delta = data["choices"][0].get("delta", {})
+                                        if "content" in delta:
+                                            full_response += delta["content"]
+                                            msg_placeholder.markdown(full_response + "▌")
+                                     except json.JSONDecodeError:
+                                         continue  # Skip invalid chunk
                     else:
                         full_response = f"Error: {response.status_code} - {response.text}"
             except Exception as e:
