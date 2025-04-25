@@ -4,6 +4,8 @@ import plotly.express as px
 import io
 import base64
 import matplotlib.pyplot as plt
+import requests
+import json
 
 st.set_page_config(
     page_title="Retrospective Analysis Tool",
@@ -136,7 +138,7 @@ if not uploaded_files:
     
     # Show example of expected format
     st.subheader("Expected CSV Format")
-    st.markdown("""
+    st.markdown(""" 
     Your CSV files should include columns for feedback description and votes, with format like:
     ```
     Type,Description,Votes
@@ -160,6 +162,9 @@ else:
             feedback_results, processing_logs = compare_retrospectives(
                 uploaded_files, min_votes, max_votes
             )
+            
+            # Save results to session state for later use in the AI assistant
+            st.session_state.retro_feedback = feedback_results
             
             # Show processing results
             with st.expander("Processing Logs", expanded=True):
@@ -246,12 +251,10 @@ else:
                 else:  # Markdown
                     # Generate markdown content
                     markdown_content = "# Retrospective Analysis Results\n\n"
-                    markdown_content += f"Filter settings: Min votes: {min_votes}, Max votes: {max_votes}\n\n"
-                    markdown_content += "## Consolidated Feedback\n\n"
-                    
+                    markdown_content += f"Filter settings: Min Votes = {min_votes}, Max Votes = {max_votes}\n\n"
+                    markdown_content += "| Feedback | Task ID | Votes |\n| --- | --- | --- |\n"
                     for _, row in results_df.iterrows():
-                        task_info = f" - Task #{row['Task ID']}" if row['Task ID'] != "None" else ""
-                        markdown_content += f"- {row['Feedback']} ({row['Votes']} votes){task_info}\n"
+                        markdown_content += f"| {row['Feedback']} | {row['Task ID']} | {row['Votes']} |\n"
                     
                     st.download_button(
                         label="Download Markdown",
@@ -259,85 +262,77 @@ else:
                         file_name="retrospective_analysis.md",
                         mime="text/markdown"
                     )
- with sub_tabs[1]:
-     
-    st.header("🤖 AI Retrospective Assistant")
-    st.markdown("Ask questions about feedback, trends, and improvements.")
 
-    if "ai_messages" not in st.session_state:
-        st.session_state.ai_messages = [
-            {"role": "assistant", "content": "Hi! I'm your retrospective assistant. How can I help?"}
-        ]
+    # AI Assistant Section (Ensure feedback is available before showing this tab)
+    with st.expander("AI Assistant"):
+        st.header("🤖 AI Retrospective Assistant")
+        st.markdown("Ask questions about feedback, trends, and improvements.")
+        
+        if "ai_messages" not in st.session_state:
+            st.session_state.ai_messages = [{"role": "assistant", "content": "Hi! I'm your retrospective assistant. How can I help?"}]
+        
+        for msg in st.session_state.ai_messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+        
+        api_key = st.text_input("🔑 OpenRouter API Key", type="password", key="ai_api_key")
 
-    for msg in st.session_state.ai_messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+        # Ensure feedback exists in session state before allowing AI assistant functionality
+        if "retro_feedback" not in st.session_state or st.session_state.retro_feedback is None:
+            st.info("Analyze retrospectives first in the previous tab.")
+            st.stop()
 
-    api_key = st.text_input("🔑 OpenRouter API Key", type="password", key="ai_api_key")
+        df = create_dataframe_from_results(st.session_state.retro_feedback)
 
-    if "retro_feedback" not in st.session_state or st.session_state.retro_feedback is None:
-        st.info("Analyze retrospectives first in the previous tab.")
-        st.stop()
+        # Build context from feedback
+        context = "You are a helpful assistant summarizing retrospective feedback:\n"
+        for _, row in df.iterrows():
+            context += f"- {row['Feedback']} ({row['Votes']} votes){' [Task ID: ' + row['Task ID'] + ']' if row['Task ID'] != 'None' else ''}\n"
 
-    df = create_dataframe_from_results(st.session_state.retro_feedback)
+        prompt = st.chat_input("Ask me anything about this retrospective...")
 
-    # Build context from feedback
-    context = "You are a helpful assistant summarizing retrospective feedback:\n"
-    for _, row in df.iterrows():
-        context += f"- {row['Feedback']} ({row['Votes']} votes){' [Task ID: ' + row['Task ID'] + ']' if row['Task ID'] != 'None' else ''}\n"
+        if prompt:
+            if not api_key:
+                st.error("Please enter an API key to proceed.")
+            else:
+                st.session_state.ai_messages.append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
 
-    prompt = st.chat_input("Ask me anything about this retrospective...")
+                with st.chat_message("assistant"):
+                    msg_placeholder = st.empty()
+                    full_response = ""
 
-    if prompt:
-        st.session_state.ai_messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+                    headers = {
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    }
 
-        with st.chat_message("assistant"):
-            msg_placeholder = st.empty()
-            full_response = ""
+                    body = {
+                        "model": "openai/gpt-3.5-turbo",
+                        "messages": [{"role": "system", "content": context}] +
+                                    [m for m in st.session_state.ai_messages if m["role"] != "assistant"],
+                        "temperature": 0.7,
+                        "max_tokens": 1500,
+                        "stream": True
+                    }
 
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "HTTP-Referer": "https://localhost",
-                "Content-Type": "application/json"
-            }
+                    try:
+                        with requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body, stream=True) as response:
+                            if response.status_code == 200:
+                                for chunk in response.iter_lines():
+                                    if chunk:
+                                        chunk_str = chunk.decode("utf-8")
+                                        if chunk_str.startswith("data:"):
+                                            data = json.loads(chunk_str[5:])
+                                            delta = data["choices"][0].get("delta", {})
+                                            if "content" in delta:
+                                                full_response += delta["content"]
+                                                msg_placeholder.markdown(full_response + "▌")
+                            else:
+                                full_response = f"Error: {response.status_code} - {response.text}"
+                    except Exception as e:
+                        full_response = f"Error: {e}"
 
-            body = {
-                "model": "openai/gpt-3.5-turbo",
-                "messages": [{"role": "system", "content": context}] +
-                            [m for m in st.session_state.ai_messages if m["role"] != "assistant"],
-                "temperature": 0.7,
-                "max_tokens": 1500,
-                "stream": True
-            }
-
-            try:
-                with requests.post("https://openrouter.ai/api/v1/chat/completions",
-                                   headers=headers, json=body, stream=True) as response:
-                    if response.status_code == 200:
-                        for chunk in response.iter_lines():
-                            if chunk:
-                                chunk_str = chunk.decode("utf-8")
-                                if chunk_str.startswith("data:"):
-                                    data = json.loads(chunk_str[5:])
-                                    delta = data["choices"][0].get("delta", {})
-                                    if "content" in delta:
-                                        full_response += delta["content"]
-                                        msg_placeholder.markdown(full_response + "▌")
-                    else:
-                        full_response = f"Error: {response.status_code} - {response.text}"
-            except Exception as e:
-                full_response = f"Error: {e}"
-
-            msg_placeholder.markdown(full_response)
-            st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
-# Footer with instructions
-st.markdown("---")
-st.markdown("### How to use this tool")
-st.markdown("""
-1. Upload one or more CSV files containing retrospective data
-2. Adjust the minimum and maximum vote thresholds as needed
-3. Click 'Analyze Retrospectives' to process the data
-4. Review the consolidated feedback, visualizations, and export as needed
-""")
+                    msg_placeholder.markdown(full_response)
+                    st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
