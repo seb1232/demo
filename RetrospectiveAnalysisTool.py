@@ -264,50 +264,60 @@ else:
                     )
 
     # AI Assistant Section (Ensure feedback is available before showing this tab)
+    import streamlit as st
+    import requests
+    import json
+    
+    # Ensure that the session state for messages is initialized
+    if "ai_messages" not in st.session_state:
+        st.session_state.ai_messages = [{"role": "assistant", "content": "Hi! I'm your retrospective assistant. How can I help?"}]
+    
+    # Display previous messages in the chat
     with st.expander("AI Assistant"):
         st.header("🤖 AI Retrospective Assistant")
         st.markdown("Ask questions about feedback, trends, and improvements.")
-        
-        if "ai_messages" not in st.session_state:
-            st.session_state.ai_messages = [{"role": "assistant", "content": "Hi! I'm your retrospective assistant. How can I help?"}]
-        
+    
+        # Display chat messages
         for msg in st.session_state.ai_messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
-        
+    
+        # Input for API Key
         api_key = st.text_input("🔑 OpenRouter API Key", type="password", key="ai_api_key")
-
+    
         # Ensure feedback exists in session state before allowing AI assistant functionality
         if "retro_feedback" not in st.session_state or st.session_state.retro_feedback is None:
             st.info("Analyze retrospectives first in the previous tab.")
             st.stop()
-
+    
+        # Prepare the DataFrame and context for AI
         df = create_dataframe_from_results(st.session_state.retro_feedback)
-
-        # Build context from feedback
         context = "You are a helpful assistant summarizing retrospective feedback:\n"
         for _, row in df.iterrows():
             context += f"- {row['Feedback']} ({row['Votes']} votes){' [Task ID: ' + row['Task ID'] + ']' if row['Task ID'] != 'None' else ''}\n"
-
+    
+        # Input field for user prompt
         prompt = st.chat_input("Ask me anything about this retrospective...")
-
+    
         if prompt:
             if not api_key:
                 st.error("Please enter an API key to proceed.")
             else:
+                # Append user message to session state
                 st.session_state.ai_messages.append({"role": "user", "content": prompt})
                 with st.chat_message("user"):
                     st.markdown(prompt)
-
+    
+                # Prepare the assistant response
                 with st.chat_message("assistant"):
                     msg_placeholder = st.empty()
                     full_response = ""
-
+    
                     headers = {
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json"
                     }
-
+    
                     body = {
                         "model": "openai/gpt-3.5-turbo",
                         "messages": [{"role": "system", "content": context}] +
@@ -316,7 +326,7 @@ else:
                         "max_tokens": 1500,
                         "stream": True
                     }
-
+    
                     try:
                         with requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body, stream=True) as response:
                             if response.status_code == 200:
@@ -333,6 +343,9 @@ else:
                                 full_response = f"Error: {response.status_code} - {response.text}"
                     except Exception as e:
                         full_response = f"Error: {e}"
-
+    
+                    # Update the chat message placeholder with the full response once it's complete
                     msg_placeholder.markdown(full_response)
+    
+                    # Append the assistant's response to session state
                     st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
