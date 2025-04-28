@@ -332,8 +332,8 @@ with ai_tab:
                                         if "content" in delta:
                                             full_response += delta["content"]
                                             msg_placeholder.markdown(full_response + "▌")
-                                     except json.JSONDecodeError:
-                                         continue  # Skip invalid chunk
+                                    except json.JSONDecodeError:
+                                        continue  # Skip invalid chunk
                     else:
                         full_response = f"Error: {response.status_code} - {response.text}"
             except Exception as e:
